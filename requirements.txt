@@ -1,0 +1,8 @@
+opencv-python
+pyautogui
+customtkinter
+pillow
+speechrecognition
+sounddevice
+scipy
+
