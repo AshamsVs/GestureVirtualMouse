@@ -1,694 +1,897 @@
+"""
+Ava - AI Desktop Assistant
+Professional gesture and voice controlled virtual mouse system
+Powered by Ava's intelligent brain with enhanced features
+"""
+
 import customtkinter as ctk
 import cv2
-from PIL import Image
-import threading
 import pyautogui
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import time
 from collections import deque
+import threading
+import traceback
 
+# Import UI components
+try:
+    from ui.main_window import MainWindow
+    from ui.sidebar import Sidebar
+    from ui.status_panel import StatusPanel
+    from ui.dialogs import HelpDialog, SettingsDialog, AlertDialog
+except ImportError:
+    print("⚠️ Warning: UI components not found. Using fallback minimal UI.")
+    MainWindow = Sidebar = StatusPanel = None
+    HelpDialog = SettingsDialog = AlertDialog = None
+
+# Import core systems
 from voice_module import VoiceAssistant, VoiceCommand
-from gestures import HandTracker
+from gestures import AdvancedHandTracker  # FIX 1: correct class name
+
+# Import Ava's brain (with fallback)
+try:
+    from ui.assistant import create_assistant, AvaCore, AssistantState
+    ASSISTANT_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: Ava assistant module not found. Using basic mode.")
+    ASSISTANT_AVAILABLE = False
 
 
-class VirtualMouseApp(ctk.CTk):
+class FallbackAssistant:
+    """Fallback assistant when Ava module is not available"""
+    def __init__(self, name="Ava"):
+        self.name = name
+        # FIX 2: lambdas replaced with proper callable methods via a nested class
+        self.personality = _Personality(name)
+
+    def initialize(self): return f"{self.name} initialized"
+    def process_gesture(self, g): return f"Gesture: {g}"
+    def process_voice_command(self, c): return f"Command: {c}"
+    def handle_error(self, t, m): return f"Error: {m}"
+    def start_listening(self): return "Listening..."
+    def voice_not_understood(self): return "Could not understand"
+    def toggle_mouse(self, s): return f"Mouse {'enabled' if s else 'disabled'}"
+    def change_mode(self, m): return f"Mode changed to {m}"
+    def set_voice_active(self, s): return f"Voice {'active' if s else 'inactive'}"
+    def reset(self): return "System reset"
+    def shutdown(self): return f"{self.name} shutting down"
+    def get_tip(self): return "💡 Tip: Use gestures for hands-free control!"
+    def get_statistics(self): return "Stats not available"
+    def get_status_report(self): return {"commands_executed": 0, "gestures_detected": 0, "session_duration": 0}
+    def update_context(self, **kwargs): pass
+
+
+class _Personality:
+    """Helper so personality attributes are real methods, not broken lambdas"""
+    def __init__(self, name):
+        self.assistant_name = name
+
+    def system_ready(self):
+        return f"{self.assistant_name} is ready!"
+
+    def greeting(self):
+        return f"Hello! I'm {self.assistant_name}, your AI assistant."
+
+
+class AvaDesktopAssistant(ctk.CTk):
     """
-    Gesture and Voice Controlled Virtual Mouse System
-    Pure AI-based hand tracking - No color markers needed!
+    Ava - AI Desktop Assistant
+    Integrates advanced gesture control, voice commands, and AI intelligence
     """
-    
+
     def __init__(self):
         super().__init__()
-        
+
         # --- Window Configuration ---
-        self.title("🖱️ AI Gesture Virtual Mouse")
-        self.geometry("1280x800")
-        self.minsize(1000, 700)
+        self.title("🤖 Ava - AI Desktop Assistant Pro")
+        self.geometry("1400x900")
+        self.minsize(1200, 800)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
-        
-        # --- Core Components ---
-        self.voice = VoiceAssistant()
-        self.hand_tracker = HandTracker()
-        
-        # --- Camera Setup ---
-        self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.cap.set(cv2.CAP_PROP_FPS, 60)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        
-        if not self.cap.isOpened():
-            self.show_error("Camera not found! Please connect a webcam.")
-            return
-        
-        # --- PyAutoGUI Optimization ---
-        pyautogui.FAILSAFE = False
-        pyautogui.PAUSE = 0
-        
-        # --- State Management ---
+
+        # --- Initialize Ava's Brain FIRST ---
+        if ASSISTANT_AVAILABLE:
+            try:
+                self.ava = create_assistant("Ava")
+            except Exception as e:
+                print(f"⚠️ Failed to create Ava assistant: {e}")
+                self.ava = FallbackAssistant("Ava")
+        else:
+            self.ava = FallbackAssistant("Ava")
+
+        # --- Initialize Core Systems ---
+        self._init_core_systems()
+
+        # --- Initialize State ---
+        self._init_state()
+
+        # --- Log startup ---
+        self._log_startup()
+
+        # --- Build UI ---
+        self._build_ui()
+
+        # --- Camera Check ---
+        if not self.cap or not self.cap.isOpened():
+            error_msg = self.ava.handle_error("camera", "Camera not found or unavailable")
+            self._show_error(error_msg)
+            if self.status_panel:
+                self.status_panel.log(error_msg, "ERROR")
+
+        # --- Start Application ---
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.after(100, self.start_systems)
+
+    # ========== INIT ==========
+
+    def _init_core_systems(self):
+        """Initialize core systems with error handling"""
+
+        # Voice Assistant
+        try:
+            self.voice = VoiceAssistant(
+                sample_rate=16000,
+                duration=4.0,
+                energy_threshold=300,
+                language="en-US"
+            )
+            print("✅ Voice Assistant initialized")
+        except Exception as e:
+            print(f"⚠️ Voice initialization error: {e}")
+            self.voice = None
+
+        # Hand Tracker  — FIX 1: use AdvancedHandTracker
+        try:
+            self.hand_tracker = AdvancedHandTracker(
+                model_path="hand_landmarker.task"
+            )
+            print("✅ Hand Tracker initialized")
+        except Exception as e:
+            print(f"⚠️ Hand tracker initialization error: {e}")
+            print("📝 Make sure 'hand_landmarker.task' model file exists")
+            self.hand_tracker = None
+
+        # Camera Setup
+        try:
+            self.cap = cv2.VideoCapture(0)
+            if self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.cap.set(cv2.CAP_PROP_FPS, 60)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                print("✅ Camera initialized")
+            else:
+                print("⚠️ Camera not available")
+                self.cap = None
+        except Exception as e:
+            print(f"⚠️ Camera error: {e}")
+            self.cap = None
+
+        # PyAutoGUI Configuration
+        try:
+            pyautogui.FAILSAFE = False
+            pyautogui.PAUSE = 0
+            self.screen_w, self.screen_h = pyautogui.size()
+            print(f"✅ Screen: {self.screen_w}x{self.screen_h}")
+        except Exception as e:
+            print(f"⚠️ PyAutoGUI error: {e}")
+            self.screen_w, self.screen_h = 1920, 1080
+
+    def _init_state(self):
+        """Initialize application state variables"""
+
+        # Control states
         self.mouse_enabled = True
         self.voice_listening = False
         self.continuous_voice = False
         self.show_landmarks = True
-        
-        # --- Cursor Control ---
-        self.screen_w, self.screen_h = pyautogui.size()
+        self.assistant_mode = "gesture"
+
+        # Cursor control
         self.cursor_smoothing = True
-        self.cursor_speed = 1.5  # Speed multiplier
-        
-        # Smoothing
-        self.prev_cursor_pos = None
+        self.cursor_speed = 1.5
         self.cursor_history = deque(maxlen=5)
-        
-        # --- Gesture State ---
+
+        # Gesture state
         self.last_gesture = None
         self.gesture_cooldown = 0
-        
-        # --- Drag State ---
+
+        # Drag state
         self.is_dragging = False
-        self.drag_gesture = None  # Track which gesture initiated drag
-        self.drag_hold_frames = 0  # Count frames gesture is held
-        self.drag_threshold = 8  # Frames to hold before drag activates
-        
-        # --- Performance ---
+        self.drag_hold_frames = 0
+        self.drag_threshold = 30
+        self.pinch_start_time = None
+
+        # Performance tracking
         self.fps_counter = deque(maxlen=30)
         self.frame_counter = 0
-        
-        # --- Build UI ---
-        self._create_ui()
-        
-        # --- Start Systems ---
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.update_frame()
-        self.update_stats()
-        
-        print("✅ AI Gesture Mouse Initialized")
-        print(f"📺 Screen: {self.screen_w}x{self.screen_h}")
-        print("✋ Use your index finger to control the cursor")
-        print("👌 Pinch to click, Open palm to right-click")
-    
-    def _create_ui(self):
-        """Create simplified UI"""
-        
-        # Main Container
-        self.main_container = ctk.CTkFrame(self)
-        self.main_container.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # === Left Panel - Video ===
-        self.left_panel = ctk.CTkFrame(self.main_container)
-        self.left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        
-        video_title = ctk.CTkLabel(
-            self.left_panel,
-            text="📹 AI Hand Tracking",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        video_title.pack(pady=(10, 5))
-        
-        self.video = ctk.CTkLabel(self.left_panel, text="")
-        self.video.pack(expand=True, pady=10)
-        
-        self.status = ctk.CTkLabel(
-            self.left_panel,
-            text="🟢 Ready - Show your hand",
-            font=ctk.CTkFont(size=14),
-            text_color="lightgreen"
-        )
-        self.status.pack(pady=5)
-        
-        # === Right Panel - Controls ===
-        self.right_panel = ctk.CTkFrame(self.main_container, width=300)
-        self.right_panel.pack(side="right", fill="both", padx=(0, 0))
-        self.right_panel.pack_propagate(False)
-        
-        controls_title = ctk.CTkLabel(
-            self.right_panel,
-            text="⚙️ Control Panel",
-            font=ctk.CTkFont(size=18, weight="bold")
-        )
-        controls_title.pack(pady=(15, 10))
-        
-        # --- Gesture Info ---
-        info_frame = ctk.CTkFrame(self.right_panel)
-        info_frame.pack(fill="x", padx=15, pady=10)
-        
-        ctk.CTkLabel(
-            info_frame,
-            text="✋ Gesture Guide",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=(10, 5))
-        
-        gestures_info = """
-👆 Point with Index
-   → Move cursor
+        self.gesture_count = 0
+        self.command_count = 0
+        self.session_start = time.time()
 
-👌 Pinch (Thumb + Index)
-   → Click
-   → Hold to DRAG
+        # System running flag
+        self.running = True
 
-✋ Open Palm (All fingers)
-   → Right Click
+    # ========== UI BUILD ==========
 
-✊ Fist (Closed hand)
-   → Double Click
+    def _build_ui(self):
+        """Build the complete UI using components"""
 
-🔒 Hold Pinch + Move
-   → Drag and Drop
-        """
-        
-        ctk.CTkLabel(
-            info_frame,
-            text=gestures_info,
-            font=ctk.CTkFont(size=12),
-            justify="left"
-        ).pack(padx=15, pady=10, anchor="w")
-        
-        # --- Mouse Control ---
-        mouse_frame = ctk.CTkFrame(self.right_panel)
-        mouse_frame.pack(fill="x", padx=15, pady=10)
-        
-        ctk.CTkLabel(
-            mouse_frame,
-            text="🖱️ Mouse Control",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=(10, 5))
-        
-        self.btn_toggle = ctk.CTkButton(
-            mouse_frame,
-            text="🔴 Disable Mouse",
-            command=self.toggle_mouse,
-            height=40,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="green",
-            hover_color="darkgreen"
-        )
-        self.btn_toggle.pack(fill="x", padx=15, pady=10)
-        
-        # --- Voice Control ---
-        voice_frame = ctk.CTkFrame(self.right_panel)
-        voice_frame.pack(fill="x", padx=15, pady=10)
-        
-        ctk.CTkLabel(
-            voice_frame,
-            text="🎤 Voice Commands",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=(10, 5))
-        
-        self.btn_voice = ctk.CTkButton(
-            voice_frame,
-            text="🎙️ Voice Command",
-            command=self.start_voice,
-            height=35
-        )
-        self.btn_voice.pack(fill="x", padx=15, pady=5)
-        
-        self.btn_continuous_voice = ctk.CTkButton(
-            voice_frame,
-            text="🔄 Continuous: OFF",
-            command=self.toggle_continuous_voice,
-            height=35,
-            fg_color="gray",
-            hover_color="darkgray"
-        )
-        self.btn_continuous_voice.pack(fill="x", padx=15, pady=5)
-        
-        # --- Settings ---
-        settings_frame = ctk.CTkFrame(self.right_panel)
-        settings_frame.pack(fill="x", padx=15, pady=10)
-        
-        ctk.CTkLabel(
-            settings_frame,
-            text="⚡ Settings",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=(10, 5))
-        
-        self.landmarks_switch = ctk.CTkSwitch(
-            settings_frame,
-            text="Show Hand Landmarks",
-            command=self.toggle_landmarks
-        )
-        self.landmarks_switch.pack(anchor="w", padx=15, pady=5)
-        self.landmarks_switch.select()
-        
-        self.smooth_switch = ctk.CTkSwitch(
-            settings_frame,
-            text="Cursor Smoothing",
-            command=self.toggle_smoothing
-        )
-        self.smooth_switch.pack(anchor="w", padx=15, pady=5)
-        self.smooth_switch.select()
-        
-        # Speed slider
-        ctk.CTkLabel(
-            settings_frame,
-            text="Cursor Speed",
-            font=ctk.CTkFont(size=12)
-        ).pack(anchor="w", padx=15, pady=(10, 0))
-        
-        self.speed_slider = ctk.CTkSlider(
-            settings_frame,
-            from_=0.5,
-            to=3.0,
-            number_of_steps=25,
-            command=self.update_speed
-        )
-        self.speed_slider.set(1.5)
-        self.speed_slider.pack(fill="x", padx=15, pady=5)
-        
-        self.speed_label = ctk.CTkLabel(
-            settings_frame,
-            text="Speed: 1.5x",
-            font=ctk.CTkFont(size=11)
-        )
-        self.speed_label.pack(anchor="w", padx=15)
-        
-        # --- Stats ---
-        stats_frame = ctk.CTkFrame(self.right_panel)
-        stats_frame.pack(fill="x", padx=15, pady=10)
-        
-        ctk.CTkLabel(
-            stats_frame,
-            text="📊 Performance",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=(10, 5))
-        
-        self.stats_label = ctk.CTkLabel(
-            stats_frame,
-            text="FPS: --\nTracking: --",
-            font=ctk.CTkFont(size=12),
-            justify="left"
-        )
-        self.stats_label.pack(padx=15, pady=10, anchor="w")
-        
-        # --- Quick Actions ---
-        actions_frame = ctk.CTkFrame(self.right_panel)
-        actions_frame.pack(fill="x", padx=15, pady=(10, 15))
-        
-        ctk.CTkLabel(
-            actions_frame,
-            text="🎯 Quick Actions",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=(10, 5))
-        
-        btn_frame = ctk.CTkFrame(actions_frame, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=10)
-        
-        ctk.CTkButton(
-            btn_frame,
-            text="🔄 Reset",
-            command=self.reset_system,
-            width=130,
-            height=30
-        ).pack(side="left", padx=5, pady=5)
-        
-        ctk.CTkButton(
-            btn_frame,
-            text="ℹ️ Help",
-            command=self.show_help,
-            width=130,
-            height=30
-        ).pack(side="right", padx=5, pady=5)
-    
-    # === Settings ===
-    
-    def toggle_landmarks(self):
-        self.show_landmarks = self.landmarks_switch.get()
-    
-    def toggle_smoothing(self):
-        self.cursor_smoothing = self.smooth_switch.get()
-        if not self.cursor_smoothing:
-            self.cursor_history.clear()
-    
-    def update_speed(self, value):
-        self.cursor_speed = value
-        self.speed_label.configure(text=f"Speed: {value:.1f}x")
-    
-    def toggle_mouse(self):
-        self.mouse_enabled = not self.mouse_enabled
-        
-        if self.mouse_enabled:
-            self.btn_toggle.configure(
-                text="🔴 Disable Mouse",
-                fg_color="green",
-                hover_color="darkgreen"
-            )
-            self.update_status("🟢 Mouse Enabled", "lightgreen")
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0, minsize=320)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
+
+        # === Main Window (Video Feed) ===
+        if MainWindow:
+            self.main_window = MainWindow(self)
+            self.main_window.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
         else:
-            self.btn_toggle.configure(
-                text="🟢 Enable Mouse",
-                fg_color="red",
-                hover_color="darkred"
-            )
-            self.update_status("🔴 Mouse Disabled", "red")
-    
-    # === Voice Control ===
-    
-    def start_voice(self):
-        if not self.voice_listening:
-            self.voice_listening = True
-            threading.Thread(target=self.run_voice, daemon=True).start()
-    
-    def run_voice(self):
-        self.update_status("🎤 Listening...", "yellow")
-        self.btn_voice.configure(state="disabled")
-        
-        result = self.voice.listen_and_execute()
-        self.handle_voice_command(result)
-        
-        color = "lightgreen" if result.success else "red"
-        self.update_status(f"🎤 {result.response}", color)
-        
-        self.btn_voice.configure(state="normal")
-        self.voice_listening = False
-    
-    def toggle_continuous_voice(self):
-        self.continuous_voice = not self.continuous_voice
-        
-        if self.continuous_voice:
-            self.btn_continuous_voice.configure(
-                text="🔄 Continuous: ON",
-                fg_color="green",
-                hover_color="darkgreen"
-            )
-            self.voice.start_continuous_listening(callback=self.on_voice_command)
-            self.update_status("🎤 Continuous listening ON", "lightgreen")
+            self.main_window = self._create_fallback_video_frame()
+
+        # === Sidebar ===
+        if Sidebar:
+            self.sidebar = Sidebar(self, callbacks=self._get_sidebar_callbacks())
+            self.sidebar.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
         else:
-            self.btn_continuous_voice.configure(
-                text="🔄 Continuous: OFF",
-                fg_color="gray",
-                hover_color="darkgray"
-            )
-            self.voice.stop_continuous_listening()
-            self.update_status("🔇 Continuous listening OFF", "gray")
-    
-    def on_voice_command(self, cmd):
-        if cmd.success:
-            self.handle_voice_command(cmd)
-            self.update_status(f"🎤 {cmd.response}", "lightgreen")
-    
-    def handle_voice_command(self, cmd):
-        response = cmd.response
-        
-        if "MOUSE_LEFT_CLICK" in response:
-            pyautogui.click()
-        elif "MOUSE_RIGHT_CLICK" in response:
-            pyautogui.rightClick()
-        elif "MOUSE_DOUBLE_CLICK" in response:
-            pyautogui.doubleClick()
-        elif "MOUSE_SCROLL_UP" in response:
-            pyautogui.scroll(3)
-        elif "MOUSE_SCROLL_DOWN" in response:
-            pyautogui.scroll(-3)
-    
-    # === Gesture Control ===
-    
-    def handle_gesture(self, gesture: str):
-        """Handle gestures with drag support"""
-        
-        # === DRAG LOGIC ===
-        if gesture == "PINCH":
-            self.drag_hold_frames += 1
-            
-            # Start dragging after holding for threshold frames
-            if self.drag_hold_frames >= self.drag_threshold and not self.is_dragging:
-                self.is_dragging = True
-                self.drag_gesture = "PINCH"
-                pyautogui.mouseDown()  # Press and hold mouse button
-                self.update_status("🔒 DRAGGING - Release to drop", "purple")
-                print("🔒 Drag mode activated")
-                return
-            
-            # Already dragging - just move cursor
-            elif self.is_dragging:
-                return  # Cursor continues moving in main loop
-            
-            # Quick pinch (not held long enough) = Click
-            elif self.drag_hold_frames < self.drag_threshold:
-                if self.gesture_cooldown == 0:
-                    pyautogui.click()
-                    self.update_status("👌 Click!", "yellow")
-                    self.gesture_cooldown = 15
-                return
-        
-        # Gesture released (no longer pinching)
-        elif self.is_dragging and gesture != "PINCH":
-            # End drag
-            pyautogui.mouseUp()  # Release mouse button
-            self.is_dragging = False
-            self.drag_gesture = None
-            self.drag_hold_frames = 0
-            self.update_status("✅ Dropped!", "lightgreen")
-            print("✅ Drag released")
-            self.gesture_cooldown = 20
-            return
-        
-        # Reset hold counter if not pinching
-        if gesture != "PINCH":
-            self.drag_hold_frames = 0
-        
-        # === REGULAR GESTURES (when not dragging) ===
-        if self.is_dragging:
-            return  # Don't process other gestures while dragging
-        
-        if gesture is None or gesture == self.last_gesture:
-            return
-        
-        if self.gesture_cooldown > 0:
-            return
-        
-        self.last_gesture = gesture
-        self.gesture_cooldown = 15
-        
-        if gesture == "OPEN_PALM":
-            pyautogui.rightClick()
-            self.update_status("✋ Right Click!", "orange")
-        elif gesture == "FIST":
-            pyautogui.doubleClick()
-            self.update_status("✊ Double Click!", "red")
-    
-    def move_cursor_smooth(self, finger_x: int, finger_y: int, frame_shape: Tuple):
-        """Move cursor with smoothing"""
-        h, w = frame_shape[:2]
-        
-        # Map to screen coordinates
-        screen_x = int(finger_x * self.screen_w / w * self.cursor_speed)
-        screen_y = int(finger_y * self.screen_h / h * self.cursor_speed)
-        
-        # Clamp to screen bounds
-        screen_x = max(0, min(self.screen_w - 1, screen_x))
-        screen_y = max(0, min(self.screen_h - 1, screen_y))
-        
-        if self.cursor_smoothing:
-            # Add to history
-            self.cursor_history.append((screen_x, screen_y))
-            
-            # Smooth using average
-            if len(self.cursor_history) > 1:
-                positions = np.array(self.cursor_history)
-                smooth_x = int(np.mean(positions[:, 0]))
-                smooth_y = int(np.mean(positions[:, 1]))
-                
-                pyautogui.moveTo(smooth_x, smooth_y, _pause=False)
-            else:
-                pyautogui.moveTo(screen_x, screen_y, _pause=False)
+            self.sidebar = self._create_fallback_controls()
+
+        # === Status Panel ===
+        if StatusPanel:
+            self.status_panel = StatusPanel(self)
+            self.status_panel.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
         else:
-            pyautogui.moveTo(screen_x, screen_y, _pause=False)
-    
-    # === Main Loop ===
-    
+            self.status_panel = self._create_fallback_status()
+
+    def _create_fallback_video_frame(self):
+        frame = ctk.CTkFrame(self)
+        label = ctk.CTkLabel(frame, text="Video Feed", font=("Arial", 20))
+        label.pack(expand=True)
+        self.video_label = label
+        return frame
+
+    def _create_fallback_controls(self):
+        frame = ctk.CTkFrame(self, width=300)
+        ctk.CTkLabel(frame, text="Controls", font=("Arial", 16)).pack(pady=10)
+        return frame
+
+    def _create_fallback_status(self):
+        class FallbackStatus:
+            def __init__(self, parent):
+                self.frame = ctk.CTkFrame(parent)
+            def log(self, msg, level="INFO"): print(f"[{level}] {msg}")
+            def update_status(self, msg, color, icon): print(f"{icon} {msg}")
+            def update_performance(self, fps, tfps=0): pass
+            def update_system_info(self, info): pass
+            def log_gesture(self, g): print(f"Gesture: {g}")
+            def log_command(self, c, r): print(f"Command: {c} -> {r}")
+
+        panel = FallbackStatus(self)
+        panel.frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        return panel
+
+    def _get_sidebar_callbacks(self) -> dict:
+        return {
+            'mode_changed': self.on_mode_changed,
+            'toggle_mouse': self.toggle_mouse,
+            'speed_changed': self.on_speed_changed,
+            'voice_command': self.start_voice_command,
+            'toggle_continuous_voice': self.toggle_continuous_voice,
+            'set_wake_word': self.set_wake_word,
+            'toggle_landmarks': self.toggle_landmarks,
+            'show_gesture_guide': self.show_gesture_guide,
+            'toggle_smoothing': self.toggle_smoothing,
+            'toggle_autostart': self.toggle_autostart,
+            'toggle_tray': self.toggle_tray,
+            'reset': self.reset_system,
+            'help': self.show_help,
+            'settings': self.show_settings,
+        }
+
+    # ========== STARTUP ==========
+
+    def start_systems(self):
+        """Start main systems after UI is ready"""
+        try:
+            greeting = self.ava.initialize()
+            self.status_panel.log(greeting, "SUCCESS")
+            self.status_panel.log(self.ava.personality.system_ready(), "INFO")
+            self.status_panel.log(f"Screen resolution: {self.screen_w}x{self.screen_h}", "INFO")
+
+            self.ava.update_context(
+                current_mode=self.assistant_mode,
+                mouse_enabled=self.mouse_enabled
+            )
+
+            if hasattr(self.main_window, 'update_mode'):
+                self.main_window.update_mode("ACTIVE", "lightgreen")
+                self.main_window.set_title(f"🤖 {self.ava.personality.assistant_name}")
+
+            self.update_frame()
+            self.update_stats()
+
+            self.after(2000, lambda: self.status_panel.log(self.ava.get_tip(), "INFO"))
+
+        except Exception as e:
+            print(f"⚠️ Startup error: {e}")
+            traceback.print_exc()
+
+    # ========== CAMERA & TRACKING ==========
+
     def update_frame(self):
+        """Main video processing loop"""
+        if not self.running:
+            return
+
         start_time = time.time()
-        
+
+        if not self.cap or not self.cap.isOpened():
+            self.after(100, self.update_frame)
+            return
+
         ret, frame = self.cap.read()
         if not ret:
             self.after(16, self.update_frame)
             return
-        
+
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
-        
-        # Detect hand
-        frame, landmarks = self.hand_tracker.find_hand_landmarks(frame)
-        
-        if landmarks:
-            # Get index finger tip for cursor
-            index_tip = self.hand_tracker.get_fingertip_position(landmarks, "index")
-            
-            if index_tip and self.mouse_enabled:
-                self.move_cursor_smooth(index_tip[0], index_tip[1], (h, w))
-            
-            # Detect gestures (including drag detection)
-            gesture = self.hand_tracker.detect_gesture(landmarks)
-            self.handle_gesture(gesture)
-            
-            # Draw landmarks
-            if self.show_landmarks:
-                frame = self.hand_tracker.draw_landmarks(frame, landmarks, show_connections=True)
-            
-            # Show drag indicator
-            if self.is_dragging:
-                cv2.putText(frame, "DRAGGING", (10, 50),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 255), 3)
-                cv2.circle(frame, (30, 30), 15, (255, 0, 255), -1)
-            
-            self.update_status("✋ Hand detected", "lightgreen")
-        else:
-            # Hand lost - cancel drag if active
-            if self.is_dragging:
-                pyautogui.mouseUp()
-                self.is_dragging = False
-                self.drag_gesture = None
-                self.drag_hold_frames = 0
-                self.update_status("❌ Drag cancelled (hand lost)", "red")
-            else:
-                self.update_status("🔍 Searching for hand...", "orange")
-        
-        # Display frame
-        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        self.video.configure(image=ctk.CTkImage(img, size=(720, 480)))
-        self.video.image = img
-        
-        # Performance
+
+        try:
+            if self.assistant_mode in ["gesture", "hybrid"] and self.hand_tracker:
+                frame = self._process_gestures(frame, h, w)
+
+            if hasattr(self.main_window, 'update_video'):
+                self.main_window.update_video(frame, size=(800, 600))
+
+        except Exception as e:
+            print(f"⚠️ Frame processing error: {e}")
+            traceback.print_exc()
+
+        # Performance tracking
         frame_time = time.time() - start_time
         fps = 1.0 / frame_time if frame_time > 0 else 0
         self.fps_counter.append(fps)
-        
+
+        if hasattr(self.main_window, 'update_fps'):
+            self.main_window.update_fps(fps)
+
         if self.gesture_cooldown > 0:
             self.gesture_cooldown -= 1
-        
+
         self.frame_counter += 1
         self.after(16, self.update_frame)
-    
-    def update_stats(self):
-        avg_fps = np.mean(self.fps_counter) if self.fps_counter else 0
-        gesture_fps = self.hand_tracker.get_fps()
-        
-        stats_text = f"""FPS: {avg_fps:.1f}
-Tracking: {gesture_fps:.1f} FPS
-Mode: AI Gestures"""
-        
-        self.stats_label.configure(text=stats_text)
-        self.after(500, self.update_stats)
-    
-    # === Utilities ===
-    
-    def update_status(self, message: str, color: str = "gray"):
-        self.after(0, lambda: self.status.configure(
-            text=f"🔷 {message}",
-            text_color=color
-        ))
-    
-    def show_error(self, message: str):
-        error_window = ctk.CTkToplevel(self)
-        error_window.title("Error")
-        error_window.geometry("400x150")
-        
-        ctk.CTkLabel(
-            error_window,
-            text="❌ Error",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=10)
-        
-        ctk.CTkLabel(error_window, text=message, wraplength=350).pack(pady=10)
-        ctk.CTkButton(error_window, text="OK", command=error_window.destroy).pack(pady=10)
-    
-    def show_help(self):
-        help_window = ctk.CTkToplevel(self)
-        help_window.title("Help")
-        help_window.geometry("500x400")
-        
-        ctk.CTkLabel(
-            help_window,
-            text="ℹ️ How to Use",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=10)
-        
-        help_text = """
-🖱️ CURSOR CONTROL:
-• Point with your index finger
-• Move your hand to control the cursor
-• Adjust speed with the slider
 
-✋ GESTURES:
-• 👌 Pinch (quick) = Left Click
-• 👌 Pinch + HOLD (1 sec) = START DRAG
-  → Keep pinching and move to drag
-  → Release pinch to DROP
-• ✋ Open Palm = Right Click
-• ✊ Fist = Double Click
-
-🔒 DRAG & DROP:
-1. Make pinch gesture (thumb + index)
-2. HOLD pinch for 1 second
-3. Purple "DRAGGING" appears
-4. Move your hand while pinching
-5. Release pinch to drop item
-
-🎤 VOICE COMMANDS:
-• "left click" - Click
-• "right click" - Right click
-• "open google" - Open Google
-• "time" - Show time
-• And more!
-
-💡 TIPS:
-• Keep hand visible in camera
-• Use good lighting
-• Adjust cursor speed for comfort
-• Enable continuous voice for hands-free
-• Hold pinch steady to activate drag
+    def _process_gestures(self, frame, h: int, w: int):
         """
-        
-        ctk.CTkLabel(
-            help_window,
-            text=help_text,
-            font=ctk.CTkFont(size=12),
-            justify="left"
-        ).pack(padx=20, pady=10)
-        
-        ctk.CTkButton(
-            help_window,
-            text="Close",
-            command=help_window.destroy
-        ).pack(pady=10)
-    
-    def reset_system(self):
-        # Cancel any active drag
+        Process hand gestures.
+        FIX 3: use find_hands() which returns (frame, List[HandData]).
+               Gesture and landmarks are both inside each HandData object —
+               no separate detect_gesture() or get_fingertip_position() calls needed.
+        FIX 4: use draw_hand_data() for drawing.
+        FIX 5: gesture is a GestureType enum — pass .value (the string) to _handle_gesture.
+        """
+
+        # find_hands() is the correct entry-point — returns original frame + hand data list
+        frame, hands = self.hand_tracker.find_hands(frame)
+
+        if hands:
+            # Use the dominant (most confident) hand for single-hand control
+            hand = self.hand_tracker.get_dominant_hand()
+
+            if hand:
+                # --- Cursor movement via index fingertip ---
+                # FIX 3: get_finger_position() is the real method; returns (x, y) or None
+                index_pos = self.hand_tracker.get_finger_position("index")
+                if index_pos and self.mouse_enabled:
+                    self._move_cursor_smooth(index_pos[0], index_pos[1], (h, w))
+
+                # --- Gesture handling ---
+                # FIX 5: hand.gesture is a GestureType enum (or None).
+                #         Pass the .value string so _handle_gesture can do string ops.
+                if hand.gesture:
+                    self._handle_gesture(hand.gesture.value)
+
+            # --- Drawing ---
+            # FIX 4: draw_hand_data() is the public drawing method
+            if self.show_landmarks:
+                frame = self.hand_tracker.draw_hand_data(frame, hands)
+
+            # Drag indicator overlay (drawn after hand data so it stays on top)
+            if self.is_dragging:
+                cv2.putText(frame, "DRAGGING", (10, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 255), 3)
+                cv2.circle(frame, (30, 30), 15, (255, 0, 255), -1)
+
+            self.status_panel.update_status("Hand detected", "lightgreen", "✋")
+
+        else:
+            # No hand detected
+            if self.is_dragging:
+                self._end_drag()
+                self.status_panel.log("Drag cancelled (hand lost)", "WARNING")
+
+            self.status_panel.update_status("Searching for hand...", "orange", "🔍")
+
+        return frame
+
+    # ========== CURSOR CONTROL ==========
+
+    def _move_cursor_smooth(self, finger_x: int, finger_y: int, frame_shape: Tuple):
+        """Move cursor with smoothing"""
+        h, w = frame_shape
+
+        screen_x = int(finger_x * self.screen_w / w * self.cursor_speed)
+        screen_y = int(finger_y * self.screen_h / h * self.cursor_speed)
+
+        margin = 10
+        screen_x = max(margin, min(self.screen_w - margin, screen_x))
+        screen_y = max(margin, min(self.screen_h - margin, screen_y))
+
+        if self.cursor_smoothing:
+            self.cursor_history.append((screen_x, screen_y))
+
+            if len(self.cursor_history) > 1:
+                positions = np.array(self.cursor_history)
+                weights = np.linspace(0.5, 1.0, len(positions))
+                smooth_x = int(np.average(positions[:, 0], weights=weights))
+                smooth_y = int(np.average(positions[:, 1], weights=weights))
+                try:
+                    pyautogui.moveTo(smooth_x, smooth_y, _pause=False)
+                except Exception:
+                    pass
+            else:
+                try:
+                    pyautogui.moveTo(screen_x, screen_y, _pause=False)
+                except Exception:
+                    pass
+        else:
+            try:
+                pyautogui.moveTo(screen_x, screen_y, _pause=False)
+            except Exception:
+                pass
+
+    # ========== GESTURE HANDLING ==========
+
+    def _handle_gesture(self, gesture: str):
+        """
+        Handle detected gestures.
+        FIX 5: gesture is now always a plain string (the .value we passed in).
+        """
+
+        if not gesture:
+            return
+
+        gesture_name = gesture.lower()   # safe — it's a str now
+
+        # === DRAG LOGIC (PINCH) ===
+        if gesture_name == "pinch":
+            self.drag_hold_frames += 1
+
+            if self.pinch_start_time is None:
+                self.pinch_start_time = time.time()
+
+            pinch_duration = time.time() - self.pinch_start_time
+
+            if pinch_duration >= 1.0 and not self.is_dragging:
+                self._start_drag()
+                return
+            elif self.is_dragging:
+                return
+            elif self.gesture_cooldown == 0 and pinch_duration < 0.3:
+                try:
+                    pyautogui.click()
+                    response = self.ava.process_gesture("PINCH")
+                    self.status_panel.update_status(response, "yellow", "👌")
+                    self.status_panel.log_gesture("PINCH (Click)")
+                    self.gesture_cooldown = 15
+                    self.gesture_count += 1
+                except Exception:
+                    pass
+                return
+
+        else:
+            self.pinch_start_time = None
+            if self.is_dragging:
+                self._end_drag()
+                return
+
+        # Reset hold counter for non-pinch
+        if gesture_name != "pinch":
+            self.drag_hold_frames = 0
+
         if self.is_dragging:
+            return
+
+        if self.gesture_cooldown > 0:
+            return
+
+        if gesture_name == self.last_gesture:
+            return
+
+        self.last_gesture = gesture_name
+        self.gesture_cooldown = 15
+        self.gesture_count += 1
+
+        response = self.ava.process_gesture(gesture_name)
+
+        try:
+            if gesture_name == "open_palm":
+                pyautogui.rightClick()
+                self.status_panel.update_status(response, "orange", "✋")
+                self.status_panel.log_gesture("OPEN_PALM (Right Click)")
+
+            elif gesture_name == "fist":
+                pyautogui.doubleClick()
+                self.status_panel.update_status(response, "red", "✊")
+                self.status_panel.log_gesture("FIST (Double Click)")
+
+            elif gesture_name == "peace":
+                self.status_panel.update_status(response, "lightblue", "✌️")
+                self.status_panel.log_gesture("PEACE")
+
+            elif gesture_name == "thumbs_up":
+                self.status_panel.update_status(response, "lightgreen", "👍")
+                self.status_panel.log_gesture("THUMBS_UP")
+
+            elif gesture_name == "thumbs_down":
+                self.status_panel.update_status(response, "orange", "👎")
+                self.status_panel.log_gesture("THUMBS_DOWN")
+
+            elif gesture_name == "three":
+                self.status_panel.update_status(response, "purple", "🤟")
+                self.status_panel.log_gesture("THREE")
+
+        except Exception as e:
+            print(f"⚠️ Gesture execution error: {e}")
+
+    def _start_drag(self):
+        try:
+            self.is_dragging = True
+            pyautogui.mouseDown()
+            response = self.ava.process_gesture("DRAG_START")
+            self.status_panel.update_status(response, "purple", "🔒")
+            self.status_panel.log("Drag started", "SUCCESS")
+            if hasattr(self.main_window, 'show_message'):
+                self.main_window.show_message("🔒 DRAGGING", 1000)
+        except Exception as e:
+            print(f"⚠️ Drag start error: {e}")
+
+    def _end_drag(self):
+        try:
             pyautogui.mouseUp()
             self.is_dragging = False
-            self.drag_gesture = None
-        
-        self.hand_tracker.reset()
-        self.cursor_history.clear()
-        self.last_gesture = None
-        self.gesture_cooldown = 0
-        self.prev_cursor_pos = None
-        self.drag_hold_frames = 0
-        self.update_status("🔄 System Reset", "lightblue")
-    
+            self.drag_hold_frames = 0
+            self.pinch_start_time = None
+            response = self.ava.process_gesture("DRAG_END")
+            self.status_panel.update_status(response, "lightgreen", "✅")
+            self.status_panel.log("Drag ended", "SUCCESS")
+            self.gesture_cooldown = 20
+        except Exception as e:
+            print(f"⚠️ Drag end error: {e}")
+
+    # ========== VOICE CONTROL ==========
+
+    def start_voice_command(self):
+        if not self.voice:
+            self.status_panel.log("Voice assistant not available", "ERROR")
+            return
+
+        if not self.voice_listening:
+            self.voice_listening = True
+            if hasattr(self.sidebar, 'set_voice_button_state'):
+                self.sidebar.set_voice_button_state(False)
+            threading.Thread(target=self._run_voice_command, daemon=True).start()
+
+    def _run_voice_command(self):
+        try:
+            listening_msg = self.ava.start_listening()
+            self.status_panel.update_status(listening_msg, "yellow", "🎤")
+            if hasattr(self.main_window, 'update_mode'):
+                self.main_window.update_mode("LISTENING", "yellow")
+
+            result = self.voice.listen_and_execute()
+
+            if result.success and result.command:
+                ava_response = self.ava.process_voice_command(result.command)
+                self._handle_voice_command(result)
+                color = "lightgreen"
+                icon = "✅"
+                display_response = ava_response if ava_response else result.response
+            else:
+                display_response = self.ava.voice_not_understood()
+                color = "orange"
+                icon = "🎤"
+
+            self.status_panel.update_status(display_response, color, icon)
+            self.status_panel.log_command(
+                result.command if result.success else "unclear",
+                display_response
+            )
+
+            if hasattr(self.main_window, 'update_mode'):
+                self.main_window.update_mode("ACTIVE", "lightgreen")
+            if hasattr(self.sidebar, 'set_voice_button_state'):
+                self.sidebar.set_voice_button_state(True)
+
+            self.voice_listening = False
+
+            if result.success:
+                self.command_count += 1
+
+        except Exception as e:
+            print(f"⚠️ Voice command error: {e}")
+            self.voice_listening = False
+            if hasattr(self.sidebar, 'set_voice_button_state'):
+                self.sidebar.set_voice_button_state(True)
+
+    def toggle_continuous_voice(self):
+        if not self.voice:
+            self.status_panel.log("Voice assistant not available", "ERROR")
+            return
+
+        self.continuous_voice = not self.continuous_voice
+
+        try:
+            if self.continuous_voice:
+                self.voice.start_continuous_listening(callback=self._on_voice_command)
+                if hasattr(self.sidebar, 'set_continuous_voice_state'):
+                    self.sidebar.set_continuous_voice_state(True)
+                response = self.ava.set_voice_active(True)
+                self.status_panel.update_status(response, "lightgreen", "🎤")
+                self.status_panel.log(response, "INFO")
+                if hasattr(self.main_window, 'update_mode'):
+                    self.main_window.update_mode("LISTENING", "yellow")
+            else:
+                self.voice.stop_continuous_listening()
+                if hasattr(self.sidebar, 'set_continuous_voice_state'):
+                    self.sidebar.set_continuous_voice_state(False)
+                response = self.ava.set_voice_active(False)
+                self.status_panel.update_status(response, "gray", "🔇")
+                self.status_panel.log(response, "INFO")
+                if hasattr(self.main_window, 'update_mode'):
+                    self.main_window.update_mode("ACTIVE", "lightgreen")
+        except Exception as e:
+            print(f"⚠️ Continuous voice error: {e}")
+
+    def _on_voice_command(self, cmd: VoiceCommand):
+        try:
+            if cmd.success:
+                ava_response = self.ava.process_voice_command(cmd.command)
+                self._handle_voice_command(cmd)
+                self.status_panel.log_command(
+                    cmd.command,
+                    ava_response if ava_response else cmd.response
+                )
+                self.command_count += 1
+        except Exception as e:
+            print(f"⚠️ Voice callback error: {e}")
+
+    def _handle_voice_command(self, cmd: VoiceCommand):
+        response = cmd.response
+        try:
+            if "MOUSE_LEFT_CLICK" in response:
+                pyautogui.click()
+            elif "MOUSE_RIGHT_CLICK" in response:
+                pyautogui.rightClick()
+            elif "MOUSE_DOUBLE_CLICK" in response:
+                pyautogui.doubleClick()
+            elif "MOUSE_SCROLL_UP" in response:
+                pyautogui.scroll(3)
+            elif "MOUSE_SCROLL_DOWN" in response:
+                pyautogui.scroll(-3)
+        except Exception as e:
+            print(f"⚠️ Voice action error: {e}")
+
+    def set_wake_word(self, wake_word: str):
+        if not self.voice:
+            return
+        try:
+            if wake_word:
+                self.voice.enable_wake_word(wake_word)
+                self.status_panel.log(f"Wake word set to: '{wake_word}'", "SUCCESS")
+        except Exception as e:
+            print(f"⚠️ Wake word error: {e}")
+
+    # ========== SETTINGS & CONTROLS ==========
+
+    def toggle_mouse(self):
+        self.mouse_enabled = not self.mouse_enabled
+        if hasattr(self.sidebar, 'set_mouse_state'):
+            self.sidebar.set_mouse_state(self.mouse_enabled)
+
+        response = self.ava.toggle_mouse(self.mouse_enabled)
+        icon = "🟢" if self.mouse_enabled else "🔴"
+        color = "lightgreen" if self.mouse_enabled else "red"
+        self.status_panel.update_status(response, color, icon)
+        self.status_panel.log(response, "INFO")
+
+    def on_mode_changed(self, mode: str):
+        self.assistant_mode = mode
+        response = self.ava.change_mode(mode)
+        self.status_panel.log(response, "SUCCESS")
+
+        if mode == "gesture":
+            self.status_panel.log("Use your hand to control the cursor", "INFO")
+        elif mode == "voice":
+            self.status_panel.log("Use voice commands to control", "INFO")
+
+    def on_speed_changed(self, speed: float):
+        self.cursor_speed = speed
+        if hasattr(self.sidebar, 'update_speed_label'):
+            self.sidebar.update_speed_label(speed)
+
+    def toggle_landmarks(self, state: bool):
+        self.show_landmarks = state
+
+    def toggle_smoothing(self, state: bool):
+        self.cursor_smoothing = state
+        if not state:
+            self.cursor_history.clear()
+
+    def toggle_autostart(self, state: bool):
+        self.status_panel.log(f"Autostart: {'enabled' if state else 'disabled'}", "INFO")
+
+    def toggle_tray(self, state: bool):
+        self.status_panel.log(f"Minimize to tray: {'enabled' if state else 'disabled'}", "INFO")
+
+    # ========== DIALOGS ==========
+
+    def show_help(self):
+        if HelpDialog:
+            HelpDialog(self)
+        else:
+            self.status_panel.log("Help dialog not available", "WARNING")
+
+    def show_settings(self):
+        if SettingsDialog:
+            current_settings = {
+                "fps_target": 60,
+                "smoothing_level": 5,
+                "gesture_confidence": 0.7,
+                "drag_hold_time": 1.0,
+                "voice_timeout": 4,
+                "minimize_to_tray": False,
+                "start_minimized": False,
+                "auto_start": False
+            }
+            SettingsDialog(self, current_settings, on_save=self._on_settings_saved)
+        else:
+            self.status_panel.log("Settings dialog not available", "WARNING")
+
+    def show_gesture_guide(self):
+        self.show_help()
+
+    def _show_error(self, message: str):
+        if AlertDialog:
+            AlertDialog(self, "Error", message, "error")
+        else:
+            print(f"ERROR: {message}")
+
+    def _on_settings_saved(self, settings: dict):
+        self.status_panel.log("Settings saved", "SUCCESS")
+
+        if "drag_hold_time" in settings:
+            self.drag_threshold = int(settings["drag_hold_time"] * 60)
+
+        if "smoothing_level" in settings and self.hand_tracker:
+            smoothing = settings["smoothing_level"] / 10.0
+            self.hand_tracker.smooth_factor = smoothing
+
+    # ========== SYSTEM MANAGEMENT ==========
+
+    def reset_system(self):
+        try:
+            if self.is_dragging:
+                self._end_drag()
+
+            if self.hand_tracker:
+                self.hand_tracker.reset()
+
+            self.cursor_history.clear()
+            self.last_gesture = None
+            self.gesture_cooldown = 0
+            self.drag_hold_frames = 0
+            self.pinch_start_time = None
+
+            response = self.ava.reset()
+            self.status_panel.update_status(response, "lightblue", "🔄")
+            self.status_panel.log(response, "INFO")
+        except Exception as e:
+            print(f"⚠️ Reset error: {e}")
+
+    def update_stats(self):
+        if not self.running:
+            return
+
+        try:
+            avg_fps = np.mean(self.fps_counter) if self.fps_counter else 0
+            tracking_fps = self.hand_tracker.get_fps() if self.hand_tracker else 0
+
+            self.status_panel.update_performance(avg_fps, tracking_fps)
+
+            self.status_panel.update_system_info({
+                "mode": self.assistant_mode.title(),
+                "mouse_enabled": self.mouse_enabled,
+                "voice_active": self.continuous_voice,
+                "gesture_count": self.gesture_count,
+                "commands_total": self.command_count
+            })
+        except Exception as e:
+            print(f"⚠️ Stats update error: {e}")
+
+        self.after(500, self.update_stats)
+
+    def _log_startup(self):
+        print("=" * 50)
+        print(f"🤖 {self.ava.personality.assistant_name.upper()} - AI DESKTOP ASSISTANT PRO")
+        print("=" * 50)
+        print(f"✅ Systems initialized")
+        print(f"📺 Screen: {self.screen_w}x{self.screen_h}")
+        print(f"🎥 Camera: {'Available' if self.cap and self.cap.isOpened() else 'Not Available'}")
+        print(f"✋ Hand tracking: {'Ready' if self.hand_tracker else 'Not Available'}")
+        print(f"🎤 Voice assistant: {'Ready' if self.voice else 'Not Available'}")
+        print(f"🧠 Ava's brain: Active")
+        print("=" * 50)
+
     def on_close(self):
-        print("🔄 Shutting down...")
-        
-        if self.continuous_voice:
-            self.voice.stop_continuous_listening()
-        
-        if self.cap.isOpened():
-            self.cap.release()
-        
+        print(f"\n🔄 Shutting down {self.ava.personality.assistant_name}...")
+        self.running = False
+
+        try:
+            shutdown_msg = self.ava.shutdown()
+            self.status_panel.log(shutdown_msg, "INFO")
+
+            if self.voice and self.continuous_voice:
+                self.voice.stop_continuous_listening()
+
+            if self.cap and self.cap.isOpened():
+                self.cap.release()
+
+            stats = self.ava.get_status_report()
+            session_duration = time.time() - self.session_start
+
+            print(f"📊 Session Summary:")
+            print(f"   Commands executed: {stats.get('commands_executed', self.command_count)}")
+            print(f"   Gestures detected: {stats.get('gestures_detected', self.gesture_count)}")
+            print(f"   Session duration: {session_duration:.1f}s")
+            print(f"   Average FPS: {np.mean(self.fps_counter) if self.fps_counter else 0:.1f}")
+
+        except Exception as e:
+            print(f"⚠️ Shutdown error: {e}")
+
         self.destroy()
         print("✅ Shutdown complete")
 
 
-if __name__ == "__main__":
+# ========== ENTRY POINT ==========
+
+def main():
     try:
-        app = VirtualMouseApp()
+        print("🚀 Starting Ava AI Desktop Assistant Pro...")
+        print("📦 Initializing systems...")
+
+        app = AvaDesktopAssistant()
         app.mainloop()
+
     except KeyboardInterrupt:
-        print("\n🛑 Interrupted by user")
+        print("\n🛑 Application interrupted by user")
     except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
+        print(f"❌ Fatal error: {e}")
         traceback.print_exc()
+        print("\n💡 Troubleshooting tips:")
+        print("   1. Make sure 'hand_landmarker.task' model file exists")
+        print("   2. Check camera permissions and availability")
+        print("   3. Verify all dependencies are installed:")
+        print("      - opencv-python")
+        print("      - mediapipe")
+        print("      - customtkinter")
+        print("      - pyautogui")
+        print("      - numpy")
+        print("      - SpeechRecognition")
+        print("      - sounddevice")
+
+
+if __name__ == "__main__":
+    main()
