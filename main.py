@@ -2,6 +2,7 @@
 Ava - AI Desktop Assistant
 Professional gesture and voice controlled virtual mouse system
 Powered by Ava's intelligent brain with enhanced features
+Created by Ashams
 """
 
 import customtkinter as ctk
@@ -27,9 +28,9 @@ except ImportError:
 
 # Import core systems
 from voice_module import VoiceAssistant, VoiceCommand
-from gestures import AdvancedHandTracker  # FIX 1: correct class name
+from gestures import AdvancedHandTracker
 
-# Import Ava's brain (with fallback)
+# Import Ava's brain (FIXED: correct import path)
 try:
     from ui.assistant import create_assistant, AvaCore, AssistantState
     ASSISTANT_AVAILABLE = True
@@ -42,7 +43,6 @@ class FallbackAssistant:
     """Fallback assistant when Ava module is not available"""
     def __init__(self, name="Ava"):
         self.name = name
-        # FIX 2: lambdas replaced with proper callable methods via a nested class
         self.personality = _Personality(name)
 
     def initialize(self): return f"{self.name} initialized"
@@ -137,11 +137,152 @@ class AvaDesktopAssistant(ctk.CTk):
                 language="en-US"
             )
             print("✅ Voice Assistant initialized")
+            
+            # EXPANDED: Register ALL commands in voice module
+            all_commands = []
+            
+            # Web commands - Social Media & Streaming
+            web_commands = [
+                "google", "open google", "search google",
+                "youtube", "open youtube", "yt",
+                "gmail", "email", "open gmail", "mail",
+                "github", "open github",
+                "facebook", "open facebook", "fb",
+                "twitter", "open twitter", "x",
+                "instagram", "open instagram", "insta",
+                "linkedin", "open linkedin",
+                "reddit", "open reddit",
+                "tiktok", "open tiktok",
+                "pinterest", "open pinterest",
+                "snapchat", "open snapchat",
+                "netflix", "open netflix",
+                "spotify", "open spotify",
+                "amazon prime", "prime video",
+                "disney plus", "disney",
+                "hulu", "open hulu",
+                "twitch", "open twitch",
+                "amazon", "open amazon",
+                "ebay", "open ebay",
+                "wikipedia", "wiki",
+                "stackoverflow", "stack overflow",
+                "coursera", "open coursera",
+                "udemy", "open udemy",
+                "chatgpt", "chat gpt",
+                "google drive", "drive", "gdrive",
+                "dropbox", "open dropbox",
+                "onedrive", "one drive",
+                "whatsapp", "open whatsapp",
+                "discord", "open discord",
+                "slack", "open slack",
+                "zoom", "open zoom",
+                "teams", "microsoft teams"
+            ]
+            all_commands.extend(web_commands)
+            
+            # Application commands
+            app_commands = [
+                "notepad", "open notepad", "text editor",
+                "calculator", "calc", "open calculator",
+                "explorer", "file explorer", "open explorer", "files",
+                "browser", "open browser", "chrome",
+                "paint", "open paint", "draw",
+                "word", "open word", "microsoft word",
+                "excel", "open excel", "spreadsheet",
+                "powerpoint", "open powerpoint", "ppt",
+                "outlook", "open outlook",
+                "task manager", "open task manager",
+                "control panel", "settings",
+                "command prompt", "cmd", "terminal",
+                "powershell",
+                "photos", "pictures",
+                "camera", "webcam",
+                "video player", "vlc",
+                "vscode", "visual studio code", "code",
+                "pycharm", "open pycharm"
+            ]
+            all_commands.extend(app_commands)
+            
+            # Media commands
+            media_commands = [
+                "play music", "music", "play song", "play songs",
+                "pause", "pause music", "stop music",
+                "next", "next song", "skip",
+                "previous", "previous song", "back",
+                "volume up", "increase volume", "louder",
+                "volume down", "decrease volume", "quieter",
+                "mute", "unmute",
+                "volume max", "maximum volume"
+            ]
+            all_commands.extend(media_commands)
+            
+            # Conversation commands - EXPANDED for "Her" style
+            conversation_commands = [
+                # Greetings
+                "hi", "hello", "hey", "hi ava", "hello ava",
+                "good morning", "good afternoon", "good evening",
+                "what's up", "whats up", "sup", "yo",
+                
+                # Questions about Ava
+                "how are you", "how are you doing", "how's it going",
+                "who created you", "who made you", "who built you", "your creator",
+                "what can you do", "what do you do", "what are you",
+                "introduce yourself", "tell me about yourself",
+                "what's your name", "whats your name", "who are you",
+                "how old are you", "your age", "when were you created",
+                
+                # Emotions & personality
+                "do you have feelings", "can you feel", "are you alive",
+                "favorite color", "favorite food",
+                "do you eat", "what do you eat",
+                
+                # Affection & social
+                "i love you", "love you", "i like you",
+                "you're awesome", "you're great", "you're amazing",
+                "good job", "well done", "thank you", "thanks",
+                
+                # Fun & random
+                "tell me a joke", "joke", "make me laugh",
+                "talk to me", "chat with me", "say something",
+                "weather", "what's the weather",
+                "meaning of life",
+                
+                # Apologies & goodbyes
+                "sorry", "i'm sorry", "my bad",
+                "goodbye", "bye", "see you later", "take care"
+            ]
+            all_commands.extend(conversation_commands)
+            
+            # System commands
+            system_commands = [
+                "time", "what time", "current time", "what's the time",
+                "date", "what date", "today", "what day",
+                "screenshot", "take screenshot", "capture screen",
+                "close window", "close", "exit",
+                "minimize all", "show desktop",
+                "lock computer", "lock screen"
+            ]
+            all_commands.extend(system_commands)
+            
+            # Mouse commands
+            mouse_commands = [
+                "click", "left click",
+                "right click",
+                "double click",
+                "scroll up", "scroll down"
+            ]
+            all_commands.extend(mouse_commands)
+            
+            # Register all in voice module
+            for cmd in all_commands:
+                self.voice.add_custom_command(cmd, "AVA_COMMAND")
+            
+            print(f"✅ Registered {len(all_commands)} voice commands")
+            
         except Exception as e:
             print(f"⚠️ Voice initialization error: {e}")
             self.voice = None
 
-        # Hand Tracker  — FIX 1: use AdvancedHandTracker
+        # Hand Tracker
         try:
             self.hand_tracker = AdvancedHandTracker(
                 model_path="hand_landmarker.task"
@@ -262,7 +403,7 @@ class AvaDesktopAssistant(ctk.CTk):
                 self.frame = ctk.CTkFrame(parent)
             def log(self, msg, level="INFO"): print(f"[{level}] {msg}")
             def update_status(self, msg, color, icon): print(f"{icon} {msg}")
-            def update_performance(self, fps, tfps=0): pass
+            def update_performance(self, fps, tfps=0, conf=0): pass
             def update_system_info(self, info): pass
             def log_gesture(self, g): print(f"Gesture: {g}")
             def log_command(self, c, r): print(f"Command: {c} -> {r}")
@@ -364,41 +505,30 @@ class AvaDesktopAssistant(ctk.CTk):
         self.after(16, self.update_frame)
 
     def _process_gestures(self, frame, h: int, w: int):
-        """
-        Process hand gestures.
-        FIX 3: use find_hands() which returns (frame, List[HandData]).
-               Gesture and landmarks are both inside each HandData object —
-               no separate detect_gesture() or get_fingertip_position() calls needed.
-        FIX 4: use draw_hand_data() for drawing.
-        FIX 5: gesture is a GestureType enum — pass .value (the string) to _handle_gesture.
-        """
+        """Process hand gestures"""
 
-        # find_hands() is the correct entry-point — returns original frame + hand data list
+        # find_hands() returns (frame, List[HandData])
         frame, hands = self.hand_tracker.find_hands(frame)
 
         if hands:
-            # Use the dominant (most confident) hand for single-hand control
+            # Use the dominant (most confident) hand
             hand = self.hand_tracker.get_dominant_hand()
 
             if hand:
                 # --- Cursor movement via index fingertip ---
-                # FIX 3: get_finger_position() is the real method; returns (x, y) or None
                 index_pos = self.hand_tracker.get_finger_position("index")
                 if index_pos and self.mouse_enabled:
                     self._move_cursor_smooth(index_pos[0], index_pos[1], (h, w))
 
                 # --- Gesture handling ---
-                # FIX 5: hand.gesture is a GestureType enum (or None).
-                #         Pass the .value string so _handle_gesture can do string ops.
                 if hand.gesture:
                     self._handle_gesture(hand.gesture.value)
 
             # --- Drawing ---
-            # FIX 4: draw_hand_data() is the public drawing method
             if self.show_landmarks:
                 frame = self.hand_tracker.draw_hand_data(frame, hands)
 
-            # Drag indicator overlay (drawn after hand data so it stays on top)
+            # Drag indicator overlay
             if self.is_dragging:
                 cv2.putText(frame, "DRAGGING", (10, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 255), 3)
@@ -455,15 +585,12 @@ class AvaDesktopAssistant(ctk.CTk):
     # ========== GESTURE HANDLING ==========
 
     def _handle_gesture(self, gesture: str):
-        """
-        Handle detected gestures.
-        FIX 5: gesture is now always a plain string (the .value we passed in).
-        """
+        """Handle detected gestures"""
 
         if not gesture:
             return
 
-        gesture_name = gesture.lower()   # safe — it's a str now
+        gesture_name = gesture.lower()
 
         # === DRAG LOGIC (PINCH) ===
         if gesture_name == "pinch":
@@ -574,6 +701,7 @@ class AvaDesktopAssistant(ctk.CTk):
     # ========== VOICE CONTROL ==========
 
     def start_voice_command(self):
+        """Start single voice command"""
         if not self.voice:
             self.status_panel.log("Voice assistant not available", "ERROR")
             return
@@ -585,28 +713,54 @@ class AvaDesktopAssistant(ctk.CTk):
             threading.Thread(target=self._run_voice_command, daemon=True).start()
 
     def _run_voice_command(self):
+        """Run single voice command with proper command routing"""
         try:
             listening_msg = self.ava.start_listening()
             self.status_panel.update_status(listening_msg, "yellow", "🎤")
             if hasattr(self.main_window, 'update_mode'):
                 self.main_window.update_mode("LISTENING", "yellow")
 
+            # Listen for voice input
             result = self.voice.listen_and_execute()
 
             if result.success and result.command:
+                # Process command through Ava's brain
                 ava_response = self.ava.process_voice_command(result.command)
+                
+                # Handle basic mouse commands from voice_module
                 self._handle_voice_command(result)
-                color = "lightgreen"
-                icon = "✅"
-                display_response = ava_response if ava_response else result.response
+                
+                # Determine which response to display
+                if ava_response and ava_response not in ["Command not recognized", None]:
+                    # Ava understood and executed the command
+                    display_response = ava_response
+                    color = "lightgreen"
+                    icon = "✅"
+                elif result.response and "MOUSE_" in result.response:
+                    # Voice module handled it (mouse command)
+                    display_response = "Mouse action executed"
+                    color = "lightgreen"
+                    icon = "✅"
+                elif result.response == "AVA_COMMAND":
+                    # Custom command recognized, use Ava's response
+                    display_response = ava_response if ava_response else "Command processed"
+                    color = "lightgreen"
+                    icon = "✅"
+                else:
+                    # Command not recognized by either system
+                    display_response = self.ava.voice_not_understood()
+                    color = "orange"
+                    icon = "❓"
             else:
-                display_response = self.ava.voice_not_understood()
+                # Listening failed or no command detected
+                display_response = result.response if result.response else self.ava.voice_not_understood()
                 color = "orange"
                 icon = "🎤"
 
+            # Update UI
             self.status_panel.update_status(display_response, color, icon)
             self.status_panel.log_command(
-                result.command if result.success else "unclear",
+                result.command if result.command else "unclear",
                 display_response
             )
 
@@ -622,11 +776,13 @@ class AvaDesktopAssistant(ctk.CTk):
 
         except Exception as e:
             print(f"⚠️ Voice command error: {e}")
+            traceback.print_exc()
             self.voice_listening = False
             if hasattr(self.sidebar, 'set_voice_button_state'):
                 self.sidebar.set_voice_button_state(True)
 
     def toggle_continuous_voice(self):
+        """Toggle continuous voice listening"""
         if not self.voice:
             self.status_panel.log("Voice assistant not available", "ERROR")
             return
@@ -656,21 +812,33 @@ class AvaDesktopAssistant(ctk.CTk):
             print(f"⚠️ Continuous voice error: {e}")
 
     def _on_voice_command(self, cmd: VoiceCommand):
+        """Callback for continuous voice listening"""
         try:
             if cmd.success:
                 ava_response = self.ava.process_voice_command(cmd.command)
                 self._handle_voice_command(cmd)
-                self.status_panel.log_command(
-                    cmd.command,
-                    ava_response if ava_response else cmd.response
-                )
+                
+                # Determine display response
+                if ava_response and ava_response not in ["Command not recognized", None]:
+                    display_response = ava_response
+                elif cmd.response == "AVA_COMMAND":
+                    display_response = ava_response if ava_response else "Command processed"
+                else:
+                    display_response = cmd.response
+                
+                self.status_panel.log_command(cmd.command, display_response)
                 self.command_count += 1
         except Exception as e:
             print(f"⚠️ Voice callback error: {e}")
+            traceback.print_exc()
 
     def _handle_voice_command(self, cmd: VoiceCommand):
+        """Handle voice command execution - only for basic mouse commands"""
         response = cmd.response
+        
         try:
+            # Only handle basic MOUSE commands from voice_module here
+            # Everything else is handled by Ava's command_registry
             if "MOUSE_LEFT_CLICK" in response:
                 pyautogui.click()
             elif "MOUSE_RIGHT_CLICK" in response:
@@ -681,10 +849,13 @@ class AvaDesktopAssistant(ctk.CTk):
                 pyautogui.scroll(3)
             elif "MOUSE_SCROLL_DOWN" in response:
                 pyautogui.scroll(-3)
+            # All other commands (open google, time, etc.) are handled by Ava
+            
         except Exception as e:
             print(f"⚠️ Voice action error: {e}")
 
     def set_wake_word(self, wake_word: str):
+        """Set wake word for voice activation"""
         if not self.voice:
             return
         try:
@@ -697,6 +868,7 @@ class AvaDesktopAssistant(ctk.CTk):
     # ========== SETTINGS & CONTROLS ==========
 
     def toggle_mouse(self):
+        """Toggle mouse control"""
         self.mouse_enabled = not self.mouse_enabled
         if hasattr(self.sidebar, 'set_mouse_state'):
             self.sidebar.set_mouse_state(self.mouse_enabled)
@@ -708,6 +880,7 @@ class AvaDesktopAssistant(ctk.CTk):
         self.status_panel.log(response, "INFO")
 
     def on_mode_changed(self, mode: str):
+        """Handle mode change"""
         self.assistant_mode = mode
         response = self.ava.change_mode(mode)
         self.status_panel.log(response, "SUCCESS")
@@ -718,33 +891,40 @@ class AvaDesktopAssistant(ctk.CTk):
             self.status_panel.log("Use voice commands to control", "INFO")
 
     def on_speed_changed(self, speed: float):
+        """Handle cursor speed change"""
         self.cursor_speed = speed
         if hasattr(self.sidebar, 'update_speed_label'):
             self.sidebar.update_speed_label(speed)
 
     def toggle_landmarks(self, state: bool):
+        """Toggle landmark visibility"""
         self.show_landmarks = state
 
     def toggle_smoothing(self, state: bool):
+        """Toggle cursor smoothing"""
         self.cursor_smoothing = state
         if not state:
             self.cursor_history.clear()
 
     def toggle_autostart(self, state: bool):
+        """Toggle autostart on Windows boot"""
         self.status_panel.log(f"Autostart: {'enabled' if state else 'disabled'}", "INFO")
 
     def toggle_tray(self, state: bool):
+        """Toggle minimize to tray"""
         self.status_panel.log(f"Minimize to tray: {'enabled' if state else 'disabled'}", "INFO")
 
     # ========== DIALOGS ==========
 
     def show_help(self):
+        """Show help dialog"""
         if HelpDialog:
             HelpDialog(self)
         else:
             self.status_panel.log("Help dialog not available", "WARNING")
 
     def show_settings(self):
+        """Show settings dialog"""
         if SettingsDialog:
             current_settings = {
                 "fps_target": 60,
@@ -761,15 +941,18 @@ class AvaDesktopAssistant(ctk.CTk):
             self.status_panel.log("Settings dialog not available", "WARNING")
 
     def show_gesture_guide(self):
+        """Show gesture guide (same as help)"""
         self.show_help()
 
     def _show_error(self, message: str):
+        """Show error dialog"""
         if AlertDialog:
             AlertDialog(self, "Error", message, "error")
         else:
             print(f"ERROR: {message}")
 
     def _on_settings_saved(self, settings: dict):
+        """Handle settings save"""
         self.status_panel.log("Settings saved", "SUCCESS")
 
         if "drag_hold_time" in settings:
@@ -782,6 +965,7 @@ class AvaDesktopAssistant(ctk.CTk):
     # ========== SYSTEM MANAGEMENT ==========
 
     def reset_system(self):
+        """Reset the system"""
         try:
             if self.is_dragging:
                 self._end_drag()
@@ -802,6 +986,7 @@ class AvaDesktopAssistant(ctk.CTk):
             print(f"⚠️ Reset error: {e}")
 
     def update_stats(self):
+        """Update statistics display"""
         if not self.running:
             return
 
@@ -824,18 +1009,21 @@ class AvaDesktopAssistant(ctk.CTk):
         self.after(500, self.update_stats)
 
     def _log_startup(self):
-        print("=" * 50)
-        print(f"🤖 {self.ava.personality.assistant_name.upper()} - AI DESKTOP ASSISTANT PRO")
-        print("=" * 50)
+        """Log startup information"""
+        print("=" * 60)
+        print(f"🤖 {self.ava.personality.assistant_name.upper()} - AI DESKTOP ASSISTANT")
+        print("=" * 60)
+        print(f"✅ Created by Ashams with love and dedication")
         print(f"✅ Systems initialized")
         print(f"📺 Screen: {self.screen_w}x{self.screen_h}")
         print(f"🎥 Camera: {'Available' if self.cap and self.cap.isOpened() else 'Not Available'}")
         print(f"✋ Hand tracking: {'Ready' if self.hand_tracker else 'Not Available'}")
         print(f"🎤 Voice assistant: {'Ready' if self.voice else 'Not Available'}")
-        print(f"🧠 Ava's brain: Active")
-        print("=" * 50)
+        print(f"🧠 Ava's brain: Active and caring!")
+        print("=" * 60)
 
     def on_close(self):
+        """Handle application close"""
         print(f"\n🔄 Shutting down {self.ava.personality.assistant_name}...")
         self.running = False
 
@@ -862,14 +1050,16 @@ class AvaDesktopAssistant(ctk.CTk):
             print(f"⚠️ Shutdown error: {e}")
 
         self.destroy()
-        print("✅ Shutdown complete")
+        print("✅ Shutdown complete. Thank you for using Ava! 💙")
 
 
 # ========== ENTRY POINT ==========
 
 def main():
+    """Main entry point"""
     try:
         print("🚀 Starting Ava AI Desktop Assistant Pro...")
+        print("💝 Created by Ashams with love")
         print("📦 Initializing systems...")
 
         app = AvaDesktopAssistant()
@@ -890,7 +1080,6 @@ def main():
         print("      - pyautogui")
         print("      - numpy")
         print("      - SpeechRecognition")
-        print("      - sounddevice")
 
 
 if __name__ == "__main__":

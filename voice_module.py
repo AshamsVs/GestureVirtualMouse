@@ -1,14 +1,23 @@
 """
 Voice Module for Ava AI Desktop Assistant
-Handles voice recognition and command processing
+Handles voice recognition and command processing with TTS
 """
 
 import speech_recognition as sr
 import threading
 import time
 from typing import Optional, Callable, Dict, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from collections import deque
+import traceback
+
+# TTS imports
+try:
+    import pyttsx3
+    TTS_AVAILABLE = True
+except ImportError:
+    print("⚠️ pyttsx3 not installed. Run: pip install pyttsx3")
+    TTS_AVAILABLE = False
 
 
 @dataclass
@@ -47,11 +56,7 @@ class VoiceProfile:
         return (self.successful_commands / self.total_commands) * 100
 
 
-# ---------------------------------------------------------------------------
-# FIX 7: Default command map lives here as a module-level TEMPLATE (never mutated).
-#         Each VoiceAssistant instance gets its own copy in __init__, so
-#         add_custom_command / remove_custom_command are instance-safe.
-# ---------------------------------------------------------------------------
+# Default command map template
 _DEFAULT_COMMAND_MAP: Dict[str, str] = {
     # Mouse
     "click":          "MOUSE_LEFT_CLICK",
@@ -99,6 +104,7 @@ class VoiceAssistant:
     - Wake word detection
     - Command mapping and execution
     - Multi-language support
+    - Text-to-Speech responses
     """
 
     def __init__(
@@ -109,21 +115,22 @@ class VoiceAssistant:
         language: str = "en-US"
     ):
         self.recognizer = sr.Recognizer()
-        self.microphone  = sr.Microphone(sample_rate=sample_rate)
+        self.sample_rate = sample_rate
+        self.microphone = sr.Microphone(sample_rate=sample_rate)
 
         # Configuration
-        self.duration  = duration
-        self.language  = language
-        self.recognizer.energy_threshold      = energy_threshold
+        self.duration = duration
+        self.language = language
+        self.recognizer.energy_threshold = energy_threshold
         self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.pause_threshold       = 0.8
+        self.recognizer.pause_threshold = 0.8
 
-        # FIX 7: each instance owns its own command map
+        # Each instance owns its own command map
         self.command_map: Dict[str, str] = dict(_DEFAULT_COMMAND_MAP)
 
         # Wake word
         self.wake_word_enabled = False
-        self.wake_word         = "ava"
+        self.wake_word = "ava"
 
         # Continuous listening
         self.is_listening_continuous = False
@@ -132,20 +139,148 @@ class VoiceAssistant:
         self.stop_listening_flag = threading.Event()
 
         # Profile & history
-        self.profile         = VoiceProfile()
+        self.profile = VoiceProfile()
         self.command_history = deque(maxlen=100)
         self.last_command_time = 0
+
+        # ========== TEXT-TO-SPEECH INITIALIZATION ==========
+        self.tts_enabled = True
+        if TTS_AVAILABLE:
+            try:
+                self.tts_engine = pyttsx3.init()
+                
+                # Configure TTS voice properties
+                self.tts_engine.setProperty('rate', 160)    # Speed (150-200 is good)
+                self.tts_engine.setProperty('volume', 0.9)  # Volume (0.0 to 1.0)
+                
+                # Try to set a female voice (more natural for Ava)
+                voices = self.tts_engine.getProperty('voices')
+                if len(voices) > 1:
+                    # voices[1] is usually female on Windows
+                    self.tts_engine.setProperty('voice', voices[1].id)
+                    print(f"✅ TTS Voice: {voices[1].name}")
+                
+                print("✅ Text-to-Speech initialized")
+            except Exception as e:
+                print(f"⚠️ TTS initialization failed: {e}")
+                self.tts_engine = None
+                self.tts_enabled = False
+        else:
+            self.tts_engine = None
+            self.tts_enabled = False
 
         # Calibrate mic
         self._calibrate_microphone()
 
         print(f"✅ Voice Assistant initialized (Language: {language})")
 
+    # ========== TEXT-TO-SPEECH ==========
+
+    def speak(self, text: str, force: bool = False):
+        """
+        Make Ava speak the given text
+        
+        Args:
+            text: Text to speak
+            force: Force speaking even if TTS is disabled
+        """
+        if not self.tts_enabled and not force:
+            print(f"🔇 [Ava would say]: {text}")
+            return
+        
+        if not self.tts_engine:
+            print(f"🔇 [Ava]: {text}")
+            return
+        
+        try:
+            # Clean text for better speech
+            clean_text = self._clean_text_for_speech(text)
+            
+            print(f"🗣️ Ava: {clean_text}")
+            
+            # Speak in a separate thread to avoid blocking
+            def _speak_thread():
+                try:
+                    self.tts_engine.say(clean_text)
+                    self.tts_engine.runAndWait()
+                except Exception as e:
+                    print(f"⚠️ Speech error: {e}")
+            
+            # Use threading for non-blocking speech
+            speech_thread = threading.Thread(target=_speak_thread, daemon=True)
+            speech_thread.start()
+            
+        except Exception as e:
+            print(f"⚠️ Speech error: {e}")
+            print(f"🔇 [Ava]: {text}")
+
+    def _clean_text_for_speech(self, text: str) -> str:
+        """Clean text for better TTS output"""
+        # Remove emojis and special characters that TTS can't pronounce
+        import re
+        
+        # Remove emojis
+        emoji_pattern = re.compile("["
+            u"\U0001F600-\U0001F64F"  # emoticons
+            u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+            u"\U0001F680-\U0001F6FF"  # transport & map symbols
+            u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            u"\U00002702-\U000027B0"
+            u"\U000024C2-\U0001F251"
+            "]+", flags=re.UNICODE)
+        text = emoji_pattern.sub('', text)
+        
+        # Replace common symbols with words
+        replacements = {
+            '✅': '',
+            '❌': '',
+            '⚠️': 'warning',
+            '🎤': '',
+            '🎵': '',
+            '🔊': '',
+            '🔇': '',
+            '💙': '',
+            '❤️': '',
+            '✋': '',
+            '👍': '',
+            '&': 'and',
+            '@': 'at',
+            '#': 'hashtag',
+        }
+        
+        for symbol, replacement in replacements.items():
+            text = text.replace(symbol, replacement)
+        
+        # Clean up extra spaces
+        text = ' '.join(text.split())
+        
+        return text.strip()
+
+    def set_tts_enabled(self, enabled: bool):
+        """Enable or disable TTS"""
+        self.tts_enabled = enabled and self.tts_engine is not None
+        status = "enabled" if self.tts_enabled else "disabled"
+        print(f"🔊 TTS {status}")
+
+    def set_speech_rate(self, rate: int):
+        """Set speech rate (words per minute)"""
+        if self.tts_engine:
+            self.tts_engine.setProperty('rate', rate)
+            print(f"🎤 Speech rate set to {rate}")
+
+    def set_speech_volume(self, volume: float):
+        """Set speech volume (0.0 to 1.0)"""
+        if self.tts_engine:
+            volume = max(0.0, min(1.0, volume))
+            self.tts_engine.setProperty('volume', volume)
+            print(f"🔊 Speech volume set to {volume:.1f}")
+
     # ========== CALIBRATION ==========
 
     def _calibrate_microphone(self):
+        """Calibrate microphone for ambient noise"""
         try:
-            with self.microphone as source:
+            with sr.Microphone(sample_rate=self.sample_rate) as source:
                 print("🎤 Calibrating microphone for ambient noise...")
                 self.recognizer.adjust_for_ambient_noise(source, duration=1)
                 print(f"✅ Microphone calibrated (threshold: {self.recognizer.energy_threshold:.0f})")
@@ -157,8 +292,13 @@ class VoiceAssistant:
     def listen_and_execute(self) -> VoiceCommand:
         """Listen for a single command and return the result."""
         try:
-            with self.microphone as source:
+            # Create a new microphone instance for each listen
+            with sr.Microphone(sample_rate=self.sample_rate) as source:
                 print("🎤 Listening...")
+                
+                # Quick adjustment for ambient noise
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                
                 audio = self.recognizer.listen(
                     source,
                     timeout=self.duration,
@@ -204,12 +344,15 @@ class VoiceAssistant:
             return VoiceCommand(command="", success=False,
                                 response=f"Speech recognition service error: {e}", confidence=0.0)
         except Exception as e:
+            print(f"⚠️ Voice error: {e}")
+            traceback.print_exc()
             return VoiceCommand(command="", success=False,
                                 response=f"Error: {e}", confidence=0.0)
 
     # ========== COMMAND MAPPING ==========
 
     def _map_command(self, command_text: str) -> Optional[str]:
+        """Map command text to action"""
         # Exact match first
         if command_text in self.command_map:
             return self.command_map[command_text]
@@ -224,25 +367,29 @@ class VoiceAssistant:
     # ========== WAKE WORD ==========
 
     def _check_wake_word(self, text: str) -> bool:
+        """Check if wake word is in text"""
         return self.wake_word.lower() in text.lower()
 
     def enable_wake_word(self, wake_word: str):
-        self.wake_word         = wake_word.lower()
+        """Enable wake word detection"""
+        self.wake_word = wake_word.lower()
         self.wake_word_enabled = True
         print(f"✅ Wake word enabled: '{wake_word}'")
 
     def disable_wake_word(self):
+        """Disable wake word detection"""
         self.wake_word_enabled = False
         print("🔇 Wake word disabled")
 
     # ========== CONTINUOUS LISTENING ==========
 
     def start_continuous_listening(self, callback: Callable[[VoiceCommand], None]):
+        """Start continuous listening mode"""
         if self.is_listening_continuous:
             print("⚠️ Already listening continuously")
             return
 
-        self.continuous_callback     = callback
+        self.continuous_callback = callback
         self.is_listening_continuous = True
         self.stop_listening_flag.clear()
 
@@ -253,6 +400,7 @@ class VoiceAssistant:
         print("✅ Continuous listening started")
 
     def stop_continuous_listening(self):
+        """Stop continuous listening mode"""
         if not self.is_listening_continuous:
             return
 
@@ -265,18 +413,22 @@ class VoiceAssistant:
         print("🔇 Continuous listening stopped")
 
     def _continuous_listen_loop(self):
+        """Continuous listening loop"""
         print("🎤 Continuous listening loop started")
 
         while self.is_listening_continuous and not self.stop_listening_flag.is_set():
             try:
+                # Use listen_and_execute which now creates its own microphone context
                 result = self.listen_and_execute()
 
                 if self.continuous_callback and result.success:
                     self.continuous_callback(result)
 
-                time.sleep(0.1)
+                time.sleep(0.5)  # Small delay between listens
+                
             except Exception as e:
                 print(f"⚠️ Continuous listening error: {e}")
+                traceback.print_exc()
                 time.sleep(1.0)
 
         print("🔇 Continuous listening loop ended")
@@ -284,34 +436,40 @@ class VoiceAssistant:
     # ========== STATS / CONFIG ==========
 
     def get_statistics(self) -> dict:
+        """Get voice assistant statistics"""
         return {
-            'total_commands':      self.profile.total_commands,
+            'total_commands': self.profile.total_commands,
             'successful_commands': self.profile.successful_commands,
-            'success_rate':        self.profile.get_success_rate(),
-            'favorite_commands':   dict(sorted(
+            'success_rate': self.profile.get_success_rate(),
+            'favorite_commands': dict(sorted(
                 self.profile.favorite_commands.items(),
                 key=lambda x: x[1], reverse=True
             )[:5]),
-            'language':            self.language,
-            'wake_word_enabled':   self.wake_word_enabled,
+            'language': self.language,
+            'wake_word_enabled': self.wake_word_enabled,
+            'tts_enabled': self.tts_enabled,
         }
 
     def reset(self):
+        """Reset voice assistant"""
         self.command_history.clear()
         self.profile = VoiceProfile()
         self._calibrate_microphone()
         print("🔄 Voice assistant reset")
 
     def set_language(self, language: str):
+        """Set recognition language"""
         self.language = language
         print(f"🌍 Language changed to: {language}")
 
-    # FIX 7: these now mutate self.command_map (instance dict), not the class variable
     def add_custom_command(self, phrase: str, action: str):
+        """Add custom command"""
         self.command_map[phrase.lower()] = action
-        print(f"✅ Custom command added: '{phrase}' -> {action}")
+        # Don't print for every command during bulk registration
+        # print(f"✅ Custom command added: '{phrase}' -> {action}")
 
     def remove_custom_command(self, phrase: str):
+        """Remove custom command"""
         key = phrase.lower()
         if key in self.command_map:
             del self.command_map[key]
@@ -320,5 +478,12 @@ class VoiceAssistant:
     # ========== CLEANUP ==========
 
     def __del__(self):
+        """Cleanup on deletion"""
         if self.is_listening_continuous:
             self.stop_continuous_listening()
+        
+        if self.tts_engine:
+            try:
+                self.tts_engine.stop()
+            except:
+                pass

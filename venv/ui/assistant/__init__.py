@@ -1,8 +1,3 @@
-"""
-Ava Assistant Package
-Central intelligence system for the AI desktop assistant
-"""
-
 from .personality import AvaPersonality, create_personality
 from .command_registry import CommandRegistry, Command, CommandCategory, create_registry
 from .assistant_core import create_assistant, AvaCore, AssistantState
